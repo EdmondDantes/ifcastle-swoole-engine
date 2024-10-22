@@ -8,13 +8,19 @@ use IfCastle\Async\CoroutineInterface;
 use IfCastle\Async\CoroutineSchedulerInterface;
 use IfCastle\Async\DeferredCancellationInterface;
 use IfCastle\Async\QueueInterface;
+use IfCastle\DI\DisposableInterface;
+use IfCastle\Exceptions\UnexpectedValue;
+use Swoole\Coroutine;
+use Swoole\Timer;
 
-class CoroutineScheduler implements CoroutineSchedulerInterface
+class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInterface
 {
+    protected array $callbacks  = [];
+    
     #[\Override]
     public function run(\Closure $function): CoroutineInterface
     {
-        // TODO: Implement run() method.
+        return new CoroutineAdapter(Coroutine::create($function));
     }
     
     #[\Override]
@@ -87,30 +93,81 @@ class CoroutineScheduler implements CoroutineSchedulerInterface
     #[\Override]
     public function defer(callable $callback): void
     {
-        // TODO: Implement defer() method.
+        Timer::after(0, $callback);
     }
     
     #[\Override]
     public function delay(float|int $delay, callable $callback): int|string
     {
-        // TODO: Implement delay() method.
+        return Timer::after((int)($delay * 1000), $callback);
     }
     
+    /**
+     * @throws UnexpectedValue
+     */
     #[\Override]
     public function interval(float|int $interval, callable $callback): int|string
     {
-        // TODO: Implement interval() method.
+        // Check if an interval is 10 ms or less.
+        if($interval <= 0.1) {
+            throw new UnexpectedValue('$interval', $interval, 'Interval must be greater than 10 ms.');
+        }
+        
+        $timerId                    = Timer::tick((int)($interval * 1000), fn() => $callback());
+        $this->callbacks[$timerId]  = $callback;
+        
+        return $timerId;
     }
     
     #[\Override]
     public function cancelInterval(int|string $timerId): void
     {
-        // TODO: Implement cancelInterval() method.
+        if(Timer::exists($timerId)) {
+            Timer::clear($timerId);
+        }
+        
+        if(array_key_exists($timerId, $this->callbacks) === false) {
+            return;
+        }
+        
+        //
+        // We do this because PHP not free memory correctly for Array structure.
+        // So we build a new array from old.
+        //
+        $callbacks                  = [];
+        
+        foreach ($this->callbacks as $key => $callback) {
+            if($key !== $timerId) {
+                $callbacks[$key]    = $callback;
+            }
+        }
+        
+        $this->callbacks            = $callbacks;
     }
     
     #[\Override]
     public function stopAllCoroutines(?\Throwable $exception = null): bool
     {
         // TODO: Implement stopAllCoroutines() method.
+    }
+    
+    #[\Override]
+    public function dispose(): void
+    {
+        $callbacks                  = $this->callbacks;
+        $this->callbacks            = [];
+        
+        foreach($callbacks as $timerId => $callback) {
+            try {
+                
+                Timer::clear($timerId);
+                
+                if($callback instanceof DisposableInterface) {
+                    $callback->dispose();
+                }
+            } catch(\Throwable) {
+                // Ignore
+            }
+        }
     }
 }
