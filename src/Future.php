@@ -10,7 +10,7 @@ use Swoole\Coroutine\Channel;
 
 final readonly class Future implements FutureInterface
 {
-    public function __construct(private FutureState $state) {}
+    public function __construct(public FutureState $state) {}
     
     #[\Override]
     public function isComplete(): bool
@@ -31,10 +31,22 @@ final readonly class Future implements FutureInterface
     public function await(CancellationInterface $cancellation = null): mixed
     {
         $channel                    = new Channel(1);
+        $state                      = \WeakReference::create($this->state);
+        $handler                    = null;
         
-        $this->state->onComplete(static fn() => $channel->push(true));
+        $handler                    = static function () use ($channel, &$handler, $state, $cancellation) {
+            $channel->push(true);
+            $state                  = $state->get();
+            $state?->unsubscribe($handler);
+            $cancellation?->unsubscribe((string)spl_object_id($handler));
+        };
+        
+        $this->state->subscribe($handler);
+        $cancellation?->subscribe($handler);
         
         $channel->pop();
+        
+        $cancellation?->throwIfRequested();
         
         if($this->state->getThrowable() !== null) {
             throw $this->state->getThrowable();
@@ -49,7 +61,7 @@ final readonly class Future implements FutureInterface
         $futureState                = new FutureState();
         $state                      = $this->state;
         
-        $state->onComplete(static function() use ($futureState, $state, $mapper) {
+        $state->subscribe(static function() use ($futureState, $state, $mapper) {
             if($state->getThrowable() !== null) {
                 $futureState->complete($state->getThrowable());
             } else {
@@ -65,7 +77,7 @@ final readonly class Future implements FutureInterface
     {
         $state = $this->state;
         
-        $state->onComplete(static function() use ($onRejected, $state) {
+        $state->subscribe(static function() use ($onRejected, $state) {
             if($state->getThrowable() !== null) {
                 $onRejected($state->getThrowable());
             }
@@ -77,7 +89,7 @@ final readonly class Future implements FutureInterface
     #[\Override]
     public function finally(callable $onFinally): static
     {
-        $this->state->onComplete($onFinally);
+        $this->state->subscribe($onFinally);
         return $this;
     }
 }

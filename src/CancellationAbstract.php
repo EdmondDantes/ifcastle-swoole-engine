@@ -45,7 +45,7 @@ abstract class CancellationAbstract implements CancellationInterface
     #[\Override]
     public function subscribe(\Closure $callback): string
     {
-        $callbackId                 = 'c'.spl_object_id($callback);
+        $callbackId                 = (string)spl_object_id($callback);
         $this->callbacks[$callbackId] = $callback;
         
         return $callbackId;

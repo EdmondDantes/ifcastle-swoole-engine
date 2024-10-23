@@ -10,7 +10,9 @@ use IfCastle\Async\DeferredCancellationInterface;
 use IfCastle\Async\QueueInterface;
 use IfCastle\DI\DisposableInterface;
 use IfCastle\Exceptions\UnexpectedValue;
+use IfCastle\Swoole\Internal\FutureState;
 use Swoole\Coroutine;
+use Swoole\Coroutine\Channel;
 use Swoole\Timer;
 
 class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInterface
@@ -26,7 +28,74 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
     #[\Override]
     public function await(iterable $futures, ?CancellationInterface $cancellation = null): array
     {
-        // TODO: Implement await() method.
+        $channel                    = new Channel(1);
+        $handler                    = null;
+        $results                    = [];
+        $awaiting                   = [];
+        
+        foreach ($futures as $future) {
+            $results[(string)spl_object_id($future)] = null;
+            $awaiting[(string)spl_object_id($future)] = true;
+        }
+        
+        $complete                   = static function() use (&$handler, $futures, $cancellation) {
+            
+            if(!is_object($handler)) {
+                return;
+            }
+            
+            foreach ($futures as $future) {
+                if($future instanceof Future) {
+                    $future->state->unsubscribe($handler);
+                }
+            }
+            
+            $cancellation?->unsubscribe((string)spl_object_id($handler));
+        };
+        
+        $handler                    = static function (mixed $futureStateOrException = null)
+                                      use ($channel, $complete, &$handler, $futures, $cancellation, &$results, &$awaiting) {
+            
+            if($futureStateOrException instanceof \Throwable) {
+                try {
+                    $channel->push(true);
+                } finally {
+                    $complete();
+                    throw $futureStateOrException;
+                }
+            }
+            
+            if(false === $futureStateOrException instanceof FutureState) {
+                return;
+            }
+            
+            if($futureStateOrException->getThrowable() !== null) {
+                
+                try {
+                    $channel->push(true);
+                } finally {
+                    $complete();
+                    throw $futureStateOrException->getThrowable();
+                }
+            }
+            
+            $id                     = (string)spl_object_id($futureStateOrException);
+            
+            if(array_key_exists($id, $results)) {
+                $results[$id]       = $futureStateOrException->getResult();
+                unset($awaiting[$id]);
+            }
+            
+            if(count($awaiting) === 0) {
+                try {
+                    $channel->push(true);
+                } finally {
+                    $complete();
+                }
+            }
+        };
+        
+        return array_values($results);
     }
     
     #[\Override]

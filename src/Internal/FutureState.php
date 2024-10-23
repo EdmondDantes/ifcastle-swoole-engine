@@ -19,7 +19,7 @@ final class FutureState
     private bool $handled = false;
     
     /**
-     * @var array<string, \Closure(?\Throwable, ?T, string): void>
+     * @var array<string, \Closure(self): void>
      */
     private array $callbacks = [];
     
@@ -103,9 +103,22 @@ final class FutureState
         $this->handled              = true;
     }
     
-    public function onComplete(callable $callback): void
+    public function subscribe(\Closure $callback): void
     {
-        $this->callbacks[]          = $callback;
+        $this->callbacks[(string)spl_object_id($callback)] = $callback;
+    }
+    
+    public function unsubscribe(\Closure|string $callback): void
+    {
+        if(!is_string($callback)) {
+            $id                     = (string)spl_object_id($callback);
+        } else {
+            $id                     = $callback;
+        }
+        
+        if (array_key_exists($id, $this->callbacks)) {
+            unset($this->callbacks[$id]);
+        }
     }
     
     private function invokeCallbacks(): void
@@ -115,7 +128,7 @@ final class FutureState
         $this->callbacks            = [];
         
         foreach ($callbacks as $callback) {
-            Coroutine::create($callback, $this->throwable, $this->result, $this->origin);
+            Coroutine::create($callback, $this);
         }
     }
 }
