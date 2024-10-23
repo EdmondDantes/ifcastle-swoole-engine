@@ -71,17 +71,15 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
     }
     
     #[\Override]
-    public function createTimeoutCancellation(float  $timeout,
-                                                           string $message = 'Operation timed out'
-    ): CancellationInterface
+    public function createTimeoutCancellation(float $timeout, string $message = 'Operation timed out'): CancellationInterface
     {
-        // TODO: Implement createTimeoutCancellation() method.
+        return new TimeoutCancellation($timeout, $message);
     }
     
     #[\Override]
     public function compositeCancellation(CancellationInterface ...$cancellations): CancellationInterface
     {
-        // TODO: Implement compositeCancellation() method.
+        return new CompositeCancellation(...$cancellations);
     }
     
     #[\Override]
