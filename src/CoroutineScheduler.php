@@ -9,7 +9,9 @@ use IfCastle\Async\CoroutineSchedulerInterface;
 use IfCastle\Async\DeferredCancellationInterface;
 use IfCastle\Async\QueueInterface;
 use IfCastle\DI\DisposableInterface;
+use IfCastle\Exceptions\LogicalException;
 use IfCastle\Exceptions\UnexpectedValue;
+use IfCastle\Swoole\Internal\Awaiter;
 use IfCastle\Swoole\Internal\FutureState;
 use Swoole\Coroutine;
 use Swoole\Coroutine\Channel;
@@ -31,126 +33,52 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
     #[\Override]
     public function await(iterable $futures, ?CancellationInterface $cancellation = null): array
     {
-        $channel                    = new Channel(1);
-        $handler                    = null;
-        $results                    = [];
-        $awaiting                   = [];
-        $error                      = null;
-        
-        foreach ($futures as $future) {
-            $results[(string)spl_object_id($future)] = null;
-            $awaiting[(string)spl_object_id($future)] = true;
-        }
-        
-        $complete                   = static function() use (&$handler, $futures, $cancellation) {
-            
-            if(!is_object($handler)) {
-                return;
-            }
-            
-            foreach ($futures as $future) {
-                if($future instanceof Future) {
-                    $future->state->unsubscribe($handler);
-                }
-            }
-            
-            $cancellation?->unsubscribe((string)spl_object_id($handler));
-        };
-        
-        $handler                    = static function (mixed $futureStateOrException = null)
-                                      use ($channel, $complete, &$handler, $futures, $cancellation, &$results, &$awaiting, &$error) {
-            
-            if($futureStateOrException instanceof \Throwable) {
-                try {
-                    $error          = $futureStateOrException;
-                    $channel->push(true);
-                } finally {
-                    $complete();
-                }
-                
-                return;
-            }
-            
-            if(false === $futureStateOrException instanceof FutureState) {
-                return;
-            }
-            
-            if($futureStateOrException->getThrowable() !== null) {
-                
-                try {
-                    $error          = $futureStateOrException->getThrowable();
-                    $channel->push(true);
-                } finally {
-                    $complete();
-                }
-                
-                return;
-            }
-            
-            $id                     = (string)spl_object_id($futureStateOrException);
-            
-            if(array_key_exists($id, $results)) {
-                $results[$id]       = $futureStateOrException->getResult();
-                unset($awaiting[$id]);
-            }
-            
-            if(count($awaiting) === 0) {
-                try {
-                    $channel->push(true);
-                } finally {
-                    $complete();
-                }
-            }
-        };
-        
-        foreach ($futures as $future) {
-            if($future instanceof Future) {
-                $future->state->subscribe($handler);
-            }
-        }
-        
-        $cancellation?->subscribe($handler);
-        
-        try {
-            $channel->pop();
-        } finally {
-            $complete();
-            
-            if($error instanceof \Throwable) {
-                throw new $error;
-            }
-        }
-        
-        return array_values($results);
+        return Awaiter::await(iterator_count($futures), $futures, $cancellation);
     }
     
+    /**
+     * @throws LogicalException
+     * @throws UnexpectedValue
+     * @throws \Throwable
+     */
     #[\Override]
     public function awaitFirst(iterable $futures, ?CancellationInterface $cancellation = null): mixed
     {
-        // TODO: Implement awaitFirst() method.
+        $results                    = Awaiter::await(1, $futures, $cancellation);
+        
+        foreach ($results as $result) {
+            if($result !== null) {
+                return $result;
+            }
+        }
+        
+        return null;
     }
     
     #[\Override]
-    public function awaitFirstSuccessful(iterable               $futures,
-                                                      ?CancellationInterface $cancellation = null
-    ): mixed
+    public function awaitFirstSuccessful(iterable $futures, ?CancellationInterface $cancellation = null): mixed
     {
-        // TODO: Implement awaitFirstSuccessful() method.
+        $results                    = Awaiter::await(1, $futures, $cancellation, true);
+        
+        foreach ($results as $result) {
+            if($result !== null) {
+                return $result;
+            }
+        }
+        
+        return null;
     }
     
     #[\Override]
     public function awaitAll(iterable $futures, ?CancellationInterface $cancellation = null): array
     {
-        // TODO: Implement awaitAll() method.
+        return Awaiter::await(iterator_count($futures), $futures, $cancellation, true);
     }
     
     #[\Override]
-    public function awaitAnyN(int                    $count,
-                                           iterable               $futures,
-                                           ?CancellationInterface $cancellation = null
-    ): array
+    public function awaitAnyN(int $count, iterable $futures, ?CancellationInterface $cancellation = null): array
     {
-        // TODO: Implement awaitAnyN() method.
+        return Awaiter::await($count, $futures, $cancellation, true);
     }
     
     #[\Override]
