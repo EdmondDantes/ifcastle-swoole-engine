@@ -95,6 +95,20 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
             }
         };
         
+        foreach ($futures as $future) {
+            if($future instanceof Future) {
+                $future->state->subscribe($handler);
+            }
+        }
+        
+        $cancellation?->subscribe($handler);
+        
+        try {
+            $channel->pop();
+        } finally {
+            $complete();
+        }
+        
         return array_values($results);
     }
     
