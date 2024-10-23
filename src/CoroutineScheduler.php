@@ -25,6 +25,9 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
         return new CoroutineAdapter(Coroutine::create($function));
     }
     
+    /**
+     * @throws \Throwable
+     */
     #[\Override]
     public function await(iterable $futures, ?CancellationInterface $cancellation = null): array
     {
@@ -32,6 +35,7 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
         $handler                    = null;
         $results                    = [];
         $awaiting                   = [];
+        $error                      = null;
         
         foreach ($futures as $future) {
             $results[(string)spl_object_id($future)] = null;
@@ -54,15 +58,17 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
         };
         
         $handler                    = static function (mixed $futureStateOrException = null)
-                                      use ($channel, $complete, &$handler, $futures, $cancellation, &$results, &$awaiting) {
+                                      use ($channel, $complete, &$handler, $futures, $cancellation, &$results, &$awaiting, &$error) {
             
             if($futureStateOrException instanceof \Throwable) {
                 try {
+                    $error          = $futureStateOrException;
                     $channel->push(true);
                 } finally {
                     $complete();
-                    throw $futureStateOrException;
                 }
+                
+                return;
             }
             
             if(false === $futureStateOrException instanceof FutureState) {
@@ -72,11 +78,13 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
             if($futureStateOrException->getThrowable() !== null) {
                 
                 try {
+                    $error          = $futureStateOrException->getThrowable();
                     $channel->push(true);
                 } finally {
                     $complete();
-                    throw $futureStateOrException->getThrowable();
                 }
+                
+                return;
             }
             
             $id                     = (string)spl_object_id($futureStateOrException);
@@ -107,6 +115,10 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
             $channel->pop();
         } finally {
             $complete();
+            
+            if($error instanceof \Throwable) {
+                throw new $error;
+            }
         }
         
         return array_values($results);
