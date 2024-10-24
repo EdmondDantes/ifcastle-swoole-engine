@@ -14,6 +14,13 @@ use Swoole\Coroutine;
  */
 final class FutureState
 {
+    public static function completed(): self
+    {
+        $state                      = new self();
+        $state->complete            = true;
+        return $state;
+    }
+    
     private bool $complete = false;
     
     private bool $handled = false;
