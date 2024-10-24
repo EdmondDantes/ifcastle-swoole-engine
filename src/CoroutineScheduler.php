@@ -105,7 +105,7 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
     #[\Override]
     public function createDeferredCancellation(): DeferredCancellationInterface
     {
-        // TODO: Implement createDeferredCancellation() method.
+        return new DeferredCancellation();
     }
     
     #[\Override]

@@ -6,23 +6,36 @@ namespace IfCastle\Swoole;
 use IfCastle\Async\CancellationInterface;
 use IfCastle\Async\DeferredCancellationInterface;
 
-class DeferredCancellation implements DeferredCancellationInterface
+final class DeferredCancellation implements DeferredCancellationInterface
 {
+    private array $callbacks = [];
+    private bool $isCancelled = false;
+    
     #[\Override]
     public function getCancellation(): CancellationInterface
     {
-        // TODO: Implement getCancellation() method.
+        return new CancellationByTrigger(fn(callable $trigger) => $this->callbacks[] = $trigger);
     }
     
     #[\Override]
     public function isCancelled(): bool
     {
-        // TODO: Implement isCancelled() method.
+        return $this->isCancelled;
     }
     
     #[\Override]
     public function cancel(?\Throwable $previous = null): void
     {
-        // TODO: Implement cancel() method.
+        if($this->isCancelled) {
+            return;
+        }
+        
+        $callbacks                  = $this->callbacks;
+        $this->callbacks            = [];
+        $this->isCancelled          = true;
+        
+        foreach ($callbacks as $callback) {
+            $callback($previous);
+        }
     }
 }
