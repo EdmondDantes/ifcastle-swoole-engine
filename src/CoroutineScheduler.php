@@ -12,9 +12,7 @@ use IfCastle\DI\DisposableInterface;
 use IfCastle\Exceptions\LogicalException;
 use IfCastle\Exceptions\UnexpectedValue;
 use IfCastle\Swoole\Internal\Awaiter;
-use IfCastle\Swoole\Internal\FutureState;
 use Swoole\Coroutine;
-use Swoole\Coroutine\Channel;
 use Swoole\Timer;
 
 class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInterface
@@ -33,7 +31,7 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
     #[\Override]
     public function await(iterable $futures, ?CancellationInterface $cancellation = null): array
     {
-        return Awaiter::await(iterator_count($futures), $futures, $cancellation);
+        return Awaiter::await(iterator_count($futures), $futures, $cancellation)[1];
     }
     
     /**
@@ -44,37 +42,35 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
     #[\Override]
     public function awaitFirst(iterable $futures, ?CancellationInterface $cancellation = null): mixed
     {
-        $results                    = Awaiter::await(1, $futures, $cancellation);
+        $results                    = Awaiter::await(1, $futures, $cancellation)[1];
         
-        foreach ($results as $result) {
-            if($result !== null) {
-                return $result;
-            }
-        }
-        
-        return null;
+        return $results[\array_key_first($results) ?? null] ?? null;
     }
     
     #[\Override]
     public function awaitFirstSuccessful(iterable $futures, ?CancellationInterface $cancellation = null): mixed
     {
-        $results                    = Awaiter::await(1, $futures, $cancellation, true);
-        
-        foreach ($results as $result) {
-            if($result !== null) {
-                return $result;
-            }
-        }
-        
-        return null;
+        $results                    = Awaiter::await(1, $futures, $cancellation, true)[1];
+
+        return $results[\array_key_first($results) ?? null] ?? null;
     }
     
+    /**
+     * @throws UnexpectedValue
+     * @throws LogicalException
+     * @throws \Throwable
+     */
     #[\Override]
     public function awaitAll(iterable $futures, ?CancellationInterface $cancellation = null): array
     {
         return Awaiter::await(iterator_count($futures), $futures, $cancellation, true);
     }
     
+    /**
+     * @throws LogicalException
+     * @throws UnexpectedValue
+     * @throws \Throwable
+     */
     #[\Override]
     public function awaitAnyN(int $count, iterable $futures, ?CancellationInterface $cancellation = null): array
     {
@@ -84,13 +80,14 @@ class CoroutineScheduler implements CoroutineSchedulerInterface, DisposableInter
     #[\Override]
     public function createChannelPair(int $size = 0): array
     {
-        // TODO: Implement createChannelPair() method.
+        $channel                    = new ChannelAdapter(new Coroutine\Channel($size));
+        return [$channel, $channel];
     }
     
     #[\Override]
     public function createQueue(int $size = 0): QueueInterface
     {
-        // TODO: Implement createQueue() method.
+        return new Queue($size);
     }
     
     #[\Override]

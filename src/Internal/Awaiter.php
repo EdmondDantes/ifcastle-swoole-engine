@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace IfCastle\Swoole\Internal;
 
 use IfCastle\Async\CancellationInterface;
+use IfCastle\Async\FutureInterface;
+use IfCastle\Exceptions\CompositeException;
 use IfCastle\Exceptions\LogicalException;
 use IfCastle\Exceptions\UnexpectedValue;
 use IfCastle\Swoole\Future;
@@ -12,9 +14,21 @@ use Swoole\Coroutine\Channel;
 final class Awaiter
 {
     /**
-     * @throws LogicalException
+     * Awaits the first N successfully completed futures.
+     * If {@code $count} is 0, then all futures are awaited.
+     * If {@code $shouldIgnoreError} is true, then the error is ignored.
+     *
+     * @template Tk of array-key
+     * @template Tv
+     *
+     * @param positive-int                      $futuresAwaitCount
+     * @param iterable<Tk, FutureInterface<Tv>> $futures
+     * @param CancellationInterface|null        $cancellation      Optional cancellation.
+     * @param bool                              $shouldIgnoreError Whether to ignore errors.
+     *
+     * @return array{array<Tk, \Throwable>, array<Tk, Tv>} The first array contains the errors, the second array
+     *                         contains the results.
      * @throws UnexpectedValue
-     * @throws \Throwable
      */
     public static function await(int                    $futuresAwaitCount,
                                  iterable               $futures,
@@ -42,14 +56,26 @@ final class Awaiter
         
         $channel                    = new Channel(1);
         $handler                    = null;
+        // Success results
         $results                    = [];
+        // Futures errors
+        $errors                     = [];
+        // Futures keys: spl_object_id => index
+        $futuresKeys                = [];
+        // Awaiting futures
         $awaiting                   = [];
-        $succeed                    = 0;
         $error                      = null;
         
-        foreach ($futures as $future) {
-            $results[(string)spl_object_id($future)] = null;
-            $awaiting[(string)spl_object_id($future)] = true;
+        // Initialize...
+        foreach ($futures as $index => $future) {
+            
+            if(false === $future instanceof Future) {
+                throw new UnexpectedValue('futures', $future, Future::class);
+            }
+            
+            $objectId               = (string)spl_object_id($future);
+            $futuresKeys[$objectId] = $index;
+            $awaiting[$objectId]    = true;
         }
         
         $complete                   = static function() use (&$handler, $futures, $cancellation) {
@@ -68,7 +94,8 @@ final class Awaiter
         };
         
         $handler                    = static function (mixed $futureStateOrException = null)
-        use ($channel, $complete, &$handler, $futures, $cancellation, &$results, &$awaiting, &$error, &$succeed, $futuresAwaitCount, $shouldIgnoreError) {
+        use ($channel, $complete, &$handler, $futures, $cancellation,
+            &$results, &$errors, $futuresKeys, &$awaiting, &$error, $futuresAwaitCount, $shouldIgnoreError) {
             
             if($futureStateOrException instanceof \Throwable) {
                 try {
@@ -92,11 +119,22 @@ final class Awaiter
                 
                 if($shouldIgnoreError) {
                     $id             = (string)spl_object_id($futureStateOrException);
-                    unset($awaiting[$id]);
                     
-                    if(count($awaiting) === 0) {
+                    if(array_key_exists($id, $awaiting)) {
+                        $errors[$futuresKeys[$id]] = $futureStateOrException->getThrowable();
+                        unset($awaiting[$id]);
+                    }
+
+                    $error          = match (true) {
+                        count($awaiting) === 0
+                                    => new CompositeException('No more objects to wait for, but success was not achieved', ...$errors),
+                        count($awaiting) < ($futuresAwaitCount - count($results))
+                                    => new CompositeException('Too many errors, waiting aborted', ...$errors),
+                        default     => null
+                    };
+                    
+                    if($error !== null) {
                         try {
-                            $error  = new LogicalException('All futures completed but condition not met.');
                             $channel->push(true);
                         } finally {
                             $complete();
@@ -118,13 +156,12 @@ final class Awaiter
             
             $id                     = (string)spl_object_id($futureStateOrException);
             
-            if(array_key_exists($id, $results)) {
-                $results[$id]       = $futureStateOrException->getResult();
-                $succeed++;
+            if(array_key_exists($id, $futuresKeys)) {
+                $results[$futuresKeys[$id]] = $futureStateOrException->getResult();
                 unset($awaiting[$id]);
             }
             
-            if(count($awaiting) === 0 || $futuresAwaitCount <= $succeed) {
+            if(count($awaiting) === 0 || $futuresAwaitCount <= count($results)) {
                 try {
                     $channel->push(true);
                 } finally {
@@ -151,6 +188,6 @@ final class Awaiter
             }
         }
         
-        return array_values($results);    
+        return [$errors, $results];
     }
 }
